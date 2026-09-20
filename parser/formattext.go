@@ -100,6 +100,8 @@ type LineTooLongError struct {
 	Utf8CharOffset int
 	CharLength     int
 	Utf8CharLength int
+	OverflowCharOffset     int
+	OverflowUtf8CharOffset int
 }
 
 // ValidateLineWidths checks each line of text against maxWidth and returns
@@ -140,6 +142,7 @@ func (fc *FontConfig) ValidateLineWidths(text, fontID string, maxWidth, cursorOv
 			}
 			width := fc.computeLinePixelWidth(seg.text, fontID)
 			if width > effectiveMaxWidth && len(seg.text) > 0 {
+				overflowCharOffset, overflowUtf8CharOffset := fc.findLineOverflowOffset(seg.text, fontID, effectiveMaxWidth)
 				errors = append(errors, LineTooLongError{
 					LineIndex:      i,
 					LineText:       seg.text,
@@ -149,12 +152,84 @@ func (fc *FontConfig) ValidateLineWidths(text, fontID string, maxWidth, cursorOv
 					Utf8CharOffset: seg.runeOffset,
 					CharLength:     len(seg.text),
 					Utf8CharLength: seg.runeLength,
+					OverflowCharOffset:     seg.byteOffset + overflowCharOffset,
+					OverflowUtf8CharOffset: seg.runeOffset + overflowUtf8CharOffset,
 				})
 			}
 		}
 	}
 
 	return errors
+}
+
+func (fc *FontConfig) findLineOverflowOffset(line, fontID string, maxWidth int) (int, int) {
+	width := 0
+	controlCodeLevel := 0
+	var controlCodeSb strings.Builder
+	controlCodeByteOffset := 0
+	controlCodeRuneOffset := 0
+	escape := false
+	escapeByteOffset := 0
+	escapeRuneOffset := 0
+	runeOffset := 0
+
+	for byteOffset, ch := range line {
+		if escape {
+			width += fc.getRunePixelWidth('\\', fontID)
+			width += fc.getRunePixelWidth(ch, fontID)
+			if width > maxWidth {
+				return escapeByteOffset, escapeRuneOffset
+			}
+			escape = false
+			runeOffset++
+			continue
+		}
+
+		if ch == '\\' && controlCodeLevel == 0 {
+			escape = true
+			escapeByteOffset = byteOffset
+			escapeRuneOffset = runeOffset
+			runeOffset++
+			continue
+		}
+
+		if ch == '{' {
+			if controlCodeLevel == 0 {
+				controlCodeByteOffset = byteOffset
+				controlCodeRuneOffset = runeOffset
+			}
+			controlCodeLevel++
+			controlCodeSb.WriteRune(ch)
+			runeOffset++
+			continue
+		}
+		if ch == '}' && controlCodeLevel > 0 {
+			controlCodeSb.WriteRune(ch)
+			controlCodeLevel--
+			if controlCodeLevel == 0 {
+				width += fc.getControlCodePixelWidth(controlCodeSb.String(), fontID)
+				if width > maxWidth {
+					return controlCodeByteOffset, controlCodeRuneOffset
+				}
+				controlCodeSb.Reset()
+			}
+			runeOffset++
+			continue
+		}
+		if controlCodeLevel > 0 {
+			controlCodeSb.WriteRune(ch)
+			runeOffset++
+			continue
+		}
+
+		width += fc.getRunePixelWidth(ch, fontID)
+		if width > maxWidth {
+			return byteOffset, runeOffset
+		}
+		runeOffset++
+	}
+
+	return len(line), runeOffset
 }
 
 func stripTrailingLineBreak(line string) string {

@@ -165,10 +165,13 @@ func (p *Parser) validateTextLineWidth(tok token.Token, text string) {
 		if le.LineIndex < len(tok.OriginalLines) {
 			src := tok.OriginalLines[le.LineIndex]
 			lineNumber = src.Line
-			charStart = src.StartChar + le.CharOffset
-			utf8CharStart = src.StartUtf8Char + le.Utf8CharOffset
+			charStart = src.StartChar + le.OverflowCharOffset
+			utf8CharStart = src.StartUtf8Char + le.OverflowUtf8CharOffset
 			charEnd = src.StartChar + le.CharOffset + le.CharLength
 			utf8CharEnd = src.StartUtf8Char + le.Utf8CharOffset + le.Utf8CharLength
+		} else {
+			charStart = tok.StartCharIndex + le.OverflowCharOffset
+			utf8CharStart = tok.StartUtf8CharIndex + le.OverflowUtf8CharOffset
 		}
 		p.warnings = append(p.warnings, ast.Warning{
 			Type:            ast.WarningLineTooLong,
